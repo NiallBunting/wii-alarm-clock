@@ -6,7 +6,8 @@ import time
 import bluetooth
 import sys
 import subprocess
-
+import gspread
+import datetime
 
 
 # --------- User Settings ---------
@@ -35,19 +36,22 @@ BUZZER_GPIO = 23
 SYNC_GPIO = 24
 
 class EventProcessor:
-    def __init__(self):
+    def __init__(self, worksheet, worksheet_y):
         self._measured = False
         self.done = False
         self._measureCnt = 0
         self._events = range(WEIGHT_SAMPLES)
         self._buzzer_state = False
+        self._worksheet = worksheet
+        self._worksheet_y = worksheet_y
 
         self._stand_time = time.time()
         self._switch_off = time.time() + 300 # About 5 mins just switch off
 
     def mass(self, event):
-
         if self._switch_off <= time.time():
+            self._worksheet.update_cell(self._worksheet_y, 1, datetime.datetime.now().replace(microsecond=0).isoformat())
+            self._worksheet.update_cell(self._worksheet_y, 2, "Missing")
             self.done = True
             return
 
@@ -60,6 +64,8 @@ class EventProcessor:
                 self._buzzer_state = False
 
             if time.time() - self._stand_time >= 60:
+                self._worksheet.update_cell(self._worksheet_y, 1, datetime.datetime.now().replace(microsecond=0).isoformat())
+                self._worksheet.update_cell(self._worksheet_y, 2, self._weight)
                 self.done = True
                 return
 
@@ -76,7 +82,7 @@ class EventProcessor:
                 self._measured = True
         else:
             self._stand_time = time.time()
-            if self._buzzer_state is False:
+            if self._buzzer_state is False and self._switch_off - time.time() <= 280:
                 buzzer_on()
                 self._buzzer_state = True
 
@@ -323,11 +329,23 @@ def main():
     #Set buzzer - pin 23 as output
     GPIO.setup(BUZZER_GPIO,GPIO.OUT)
     GPIO.setup(SYNC_GPIO,GPIO.OUT)
-    
+
     buzzer_off()
+
+    gc = gspread.service_account("/home/pi/wii-alarm-clock/client_secret.json")
+    sh = gc.open_by_key("<sheet key>")
+    ws = sh.get_worksheet(0)
+
+    # Get row required
+    startdate_raw = sh.sheet1.get('B1')[0][0]
+    startdate = datetime.datetime.strptime(startdate_raw, "%Y-%m-%dT%H:%M:%S")
+    days = (datetime.datetime.now()-startdate).days
+    # 4 here is the size of the headers on the sheet
+    yvalue = 4 + days
+
     start_sync()
 
-    processor = EventProcessor()
+    processor = EventProcessor(ws, yvalue)
 
     board = Wiiboard(processor)
     if len(sys.argv) == 1:
